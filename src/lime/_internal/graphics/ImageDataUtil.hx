@@ -64,62 +64,102 @@ class ImageDataUtil
 		var s3:RGBA = 0;
 		var s4:RGBA = 0;
 
-		var mPointXFloor:Int;
-		var mPointYFloor:Int;
-
 		var disOffsetXFloor:Int;
 		var disOffsetYFloor:Int;
 
 		var disX:Float;
 		var disY:Float;
 
-		for (y in 0...sourceView.height)
+		// the same for every pixel
+		var width:Int = sourceView.width;
+		var height:Int = sourceView.height;
+
+		var mPointXFloor:Int = Std.int(mapPoint.x);
+		var mPointYFloor:Int = Std.int(mapPoint.y);
+		var mapU:Float = mapPoint.x - mPointXFloor;
+		var mapV:Float = mapPoint.y - mPointYFloor;
+
+		// with both weights 0, blending the four map pixels gives the first of them
+		var blendMap:Bool = smooth && (mapU != 0 || mapV != 0);
+
+		var disXFromX:Float = componentX.x;
+		var disXFromY:Float = componentY.x;
+		var disYFromX:Float = componentX.y;
+		var disYFromY:Float = componentY.y;
+
+		var mapRow:Int;
+		var mapRowBelow:Int;
+		var mapOffset:Int;
+
+		var disOffset:Int;
+		var disOffsetBelow:Int;
+		var su:Float;
+		var sv:Float;
+
+		for (y in 0...height)
 		{
 			row = sourceView.row(y);
 
-			for (x in 0...sourceView.width)
+			// the smoothed map is read along the source's rows, the plain one along its own
+			mapRow = smooth ? sourceView.row(y - mPointYFloor) : mapView.row(y - mPointYFloor);
+			mapRowBelow = sourceView.row(y - mPointYFloor + 1);
+
+			for (x in 0...width)
 			{
 				sourceOffset = row + (x * 4);
+				mapOffset = mapRow + (x - mPointXFloor) * 4;
 
-				mPointXFloor = Std.int(mapPoint.x);
-				mPointYFloor = Std.int(mapPoint.y);
-
-				if (smooth)
+				if (blendMap)
 				{
-					s1.readUInt8(mapData, sourceView.row(y - mPointYFloor + 1) + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
-					s2.readUInt8(mapData, sourceView.row(y - mPointYFloor) + (x - mPointXFloor + 1) * 4, mapFormat, mapPremultiplied);
-					s3.readUInt8(mapData, sourceView.row(y - mPointYFloor + 1) + (x - mPointXFloor + 1) * 4, mapFormat, mapPremultiplied);
-					s4.readUInt8(mapData, sourceView.row(y - mPointYFloor) + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
+					s1.readUInt8(mapData, mapRowBelow + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
+					s2.readUInt8(mapData, mapOffset + 4, mapFormat, mapPremultiplied);
+					s3.readUInt8(mapData, mapRowBelow + (x - mPointXFloor + 1) * 4, mapFormat, mapPremultiplied);
+					s4.readUInt8(mapData, mapOffset, mapFormat, mapPremultiplied);
 
-					mapPixel = bilinear(s1, s2, s3, s4, mapPoint.x - mPointXFloor, mapPoint.y - mPointYFloor);
+					mapPixel = bilinear(s1, s2, s3, s4, mapU, mapV);
 				}
 				else
 				{
-					mapPixel.readUInt8(mapData, mapView.row(y - mPointYFloor) + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
+					mapPixel.readUInt8(mapData, mapOffset, mapFormat, mapPremultiplied);
 				}
 
 				mapPixelA = mapPixel.a / 255.0;
 				mapPixelX = (((mapPixel.r - 128) / 255.0)) * mapPixelA;
 				mapPixelY = (((mapPixel.g - 128) / 255.0)) * mapPixelA;
 
-				disX = mapPixelX * componentX.x + mapPixelY * componentY.x;
-				disY = mapPixelX * componentX.y + mapPixelY * componentY.y;
+				disX = mapPixelX * disXFromX + mapPixelY * disXFromY;
+				disY = mapPixelX * disYFromX + mapPixelY * disYFromY;
 
-				disOffsetXFloor = Math.floor(disX * sourceView.width);
-				disOffsetYFloor = Math.floor(disY * sourceView.height);
+				disOffsetXFloor = Math.floor(disX * width);
+				disOffsetYFloor = Math.floor(disY * height);
+
+				disOffset = sourceView.row(y + disOffsetYFloor) + (x + disOffsetXFloor) * 4;
 
 				if (smooth)
 				{
-					s1.readUInt8(sourceData, sourceView.row(y + disOffsetYFloor + 1) + (x + disOffsetXFloor) * 4, sourceFormat, sourcePremultiplied);
-					s2.readUInt8(sourceData, sourceView.row(y + disOffsetYFloor) + (x + disOffsetXFloor + 1) * 4, sourceFormat, sourcePremultiplied);
-					s3.readUInt8(sourceData, sourceView.row(y + disOffsetYFloor + 1) + (x + disOffsetXFloor + 1) * 4, sourceFormat, sourcePremultiplied);
-					s4.readUInt8(sourceData, sourceView.row(y + disOffsetYFloor) + (x + disOffsetXFloor) * 4, sourceFormat, sourcePremultiplied);
+					su = disX * width - disOffsetXFloor;
+					sv = disY * height - disOffsetYFloor;
 
-					sourcePixel = bilinear(s1, s2, s3, s4, disX * sourceView.width - disOffsetXFloor, disY * sourceView.height - disOffsetYFloor);
+					if (su == 0 && sv == 0)
+					{
+						// both weights 0 again: the pixel the displacement lands on
+						sourcePixel.readUInt8(sourceData, disOffset, sourceFormat, sourcePremultiplied);
+					}
+					else
+					{
+						disOffsetBelow = sourceView.row(y + disOffsetYFloor + 1) + (x + disOffsetXFloor) * 4;
+
+						s1.readUInt8(sourceData, disOffsetBelow, sourceFormat, sourcePremultiplied);
+						s2.readUInt8(sourceData, disOffset + 4, sourceFormat, sourcePremultiplied);
+						s3.readUInt8(sourceData, disOffsetBelow + 4, sourceFormat, sourcePremultiplied);
+						s4.readUInt8(sourceData, disOffset, sourceFormat, sourcePremultiplied);
+
+						sourcePixel = bilinear(s1, s2, s3, s4, su, sv);
+					}
 				}
 				else
 				{
-					sourcePixel.readUInt8(sourceData, sourceView.row(y + disOffsetYFloor) + (x + disOffsetXFloor) * 4, sourceFormat, sourcePremultiplied);
+					sourcePixel.readUInt8(sourceData, disOffset, sourceFormat, sourcePremultiplied);
 				}
 
 				sourcePixel.writeUInt8(targetData, sourceOffset, targetFormat, targetPremultiplied);
@@ -134,9 +174,21 @@ class ImageDataUtil
 	// s2 = (x + 1, y);
 	// s3 = (x + 1, y + 1);
 	// s4 = (x, y)
-	private static function bilinear(s1:RGBA, s2:RGBA, s3:RGBA, s4:RGBA, su:Float, sv:Float):RGBA
+	private static inline function bilinear(s1:RGBA, s2:RGBA, s3:RGBA, s4:RGBA, su:Float, sv:Float):RGBA
 	{
-		return lerpRGBA(lerpRGBA(s4, s2, su), lerpRGBA(s1, s3, su), sv);
+		var result:RGBA = 0;
+		result.set(bilinearChannel(s4.r, s2.r, s1.r, s3.r, su, sv), bilinearChannel(s4.g, s2.g, s1.g, s3.g, su, sv),
+			bilinearChannel(s4.b, s2.b, s1.b, s3.b, su, sv), bilinearChannel(s4.a, s2.a, s1.a, s3.a, su, sv));
+		return result;
+	}
+
+	// One channel of the four pixels: across the upper pair and the lower pair by su, then down by sv,
+	// each step rounded down to a byte, which is what lerpRGBA does to a whole pixel
+	private static inline function bilinearChannel(upperLeft:Int, upperRight:Int, lowerLeft:Int, lowerRight:Int, su:Float, sv:Float):Int
+	{
+		var upper:Int = Math.floor((1.0 - su) * upperLeft + su * upperRight) & 0xFF;
+		var lower:Int = Math.floor((1.0 - su) * lowerLeft + su * lowerRight) & 0xFF;
+		return Math.floor((1.0 - sv) * upper + sv * lower);
 	}
 
 	private static function lerpRGBA(v0:RGBA, v1:RGBA, x:Float):RGBA
