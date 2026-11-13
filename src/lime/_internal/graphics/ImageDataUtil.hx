@@ -64,8 +64,15 @@ class ImageDataUtil
 		var s3:RGBA = 0;
 		var s4:RGBA = 0;
 
-		var mPointXFloor:Int;
-		var mPointYFloor:Int;
+		var mPointXFloor:Int = Std.int(mapPoint.x);
+		var mPointYFloor:Int = Std.int(mapPoint.y);
+
+		// Smoothing reads a position that lies between pixels by blending the four pixels around it.
+		// A position without a fraction lies exactly on one pixel, and blending would only give back that
+		// pixel, so it is read directly. The map position is the same for every pixel, so it is checked
+		// once here; the displacement differs per pixel, so it is checked inside the loop.
+		var mapPointHasFraction:Bool = (mapPoint.x != mPointXFloor || mapPoint.y != mPointYFloor);
+		var displacementHasFraction:Bool;
 
 		var disOffsetXFloor:Int;
 		var disOffsetYFloor:Int;
@@ -81,15 +88,12 @@ class ImageDataUtil
 			{
 				sourceOffset = row + (x * 4);
 
-				mPointXFloor = Std.int(mapPoint.x);
-				mPointYFloor = Std.int(mapPoint.y);
-
-				if (smooth)
+				if (smooth && mapPointHasFraction)
 				{
-					s1.readUInt8(mapData, sourceView.row(y - mPointYFloor + 1) + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
-					s2.readUInt8(mapData, sourceView.row(y - mPointYFloor) + (x - mPointXFloor + 1) * 4, mapFormat, mapPremultiplied);
-					s3.readUInt8(mapData, sourceView.row(y - mPointYFloor + 1) + (x - mPointXFloor + 1) * 4, mapFormat, mapPremultiplied);
-					s4.readUInt8(mapData, sourceView.row(y - mPointYFloor) + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
+					s1.readUInt8(mapData, mapView.row(y - mPointYFloor + 1) + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
+					s2.readUInt8(mapData, mapView.row(y - mPointYFloor) + (x - mPointXFloor + 1) * 4, mapFormat, mapPremultiplied);
+					s3.readUInt8(mapData, mapView.row(y - mPointYFloor + 1) + (x - mPointXFloor + 1) * 4, mapFormat, mapPremultiplied);
+					s4.readUInt8(mapData, mapView.row(y - mPointYFloor) + (x - mPointXFloor) * 4, mapFormat, mapPremultiplied);
 
 					mapPixel = bilinear(s1, s2, s3, s4, mapPoint.x - mPointXFloor, mapPoint.y - mPointYFloor);
 				}
@@ -108,7 +112,10 @@ class ImageDataUtil
 				disOffsetXFloor = Math.floor(disX * sourceView.width);
 				disOffsetYFloor = Math.floor(disY * sourceView.height);
 
-				if (smooth)
+				// the same again: a displacement by whole pixels lands on one source pixel, so that one is read alone
+				displacementHasFraction = (disX * sourceView.width != disOffsetXFloor || disY * sourceView.height != disOffsetYFloor);
+
+				if (smooth && displacementHasFraction)
 				{
 					s1.readUInt8(sourceData, sourceView.row(y + disOffsetYFloor + 1) + (x + disOffsetXFloor) * 4, sourceFormat, sourcePremultiplied);
 					s2.readUInt8(sourceData, sourceView.row(y + disOffsetYFloor) + (x + disOffsetXFloor + 1) * 4, sourceFormat, sourcePremultiplied);
@@ -134,20 +141,19 @@ class ImageDataUtil
 	// s2 = (x + 1, y);
 	// s3 = (x + 1, y + 1);
 	// s4 = (x, y)
-	private static function bilinear(s1:RGBA, s2:RGBA, s3:RGBA, s4:RGBA, su:Float, sv:Float):RGBA
+	private static inline function bilinear(s1:RGBA, s2:RGBA, s3:RGBA, s4:RGBA, su:Float, sv:Float):RGBA
 	{
 		return lerpRGBA(lerpRGBA(s4, s2, su), lerpRGBA(s1, s3, su), sv);
 	}
 
-	private static function lerpRGBA(v0:RGBA, v1:RGBA, x:Float):RGBA
+	private static inline function lerpRGBA(v0:RGBA, v1:RGBA, x:Float):RGBA
 	{
-		var result:RGBA = 0;
-		result.r = Math.floor(lerp(v0.r, v1.r, x));
-		result.g = Math.floor(lerp(v0.g, v1.g, x));
-		result.b = Math.floor(lerp(v0.b, v1.b, x));
-		result.a = Math.floor(lerp(v0.a, v1.a, x));
-
-		return result;
+		return RGBA.create(
+			Math.floor(lerp(v0.r, v1.r, x)),
+			Math.floor(lerp(v0.g, v1.g, x)),
+			Math.floor(lerp(v0.b, v1.b, x)),
+			Math.floor(lerp(v0.a, v1.a, x))
+		);
 	}
 
 	private static function lerp4f(v0:Vector4, v1:Vector4, x:Float):Vector4
@@ -155,7 +161,7 @@ class ImageDataUtil
 		return new Vector4(lerp(v0.x, v1.x, x), lerp(v0.y, v1.y, x), lerp(v0.z, v1.z, x), lerp(v0.w, v1.w, x));
 	}
 
-	private static function lerp(v0:Float, v1:Float, x:Float):Float
+	private static inline function lerp(v0:Float, v1:Float, x:Float):Float
 	{
 		return (1.0 - x) * v0 + x * v1;
 	}
